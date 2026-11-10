@@ -1,0 +1,459 @@
+{
+  "name": "Automated_Sales_Reporting",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -784,
+        -368
+      ],
+      "id": "39e05d89-65c2-4c68-9119-c214ebc8dfd4",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "url": "https://dummyjson.com/carts?limit=100",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -576,
+        -368
+      ],
+      "id": "b14842c0-c8e1-4080-a784-5785f0686513",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "language": "pythonNative",
+        "pythonCode": "rows = []\n\nfor item in _items:\n    p = item[\"json\"]\n    rows.append({\n        \"product_id\": p[\"id\"],\n        \"product\": p[\"title\"],\n        \"order_date\": p[\"order_date\"],\n        \"price\": round(float(p[\"price\"]), 2),\n        \"quantity\": int(p[\"quantity\"]),\n        \"total_amount\": round(float(p[\"total\"]), 2),\n        \"discounted_amount\": round(float(p[\"discountedTotal\"]), 2),\n    })\n\n# Z-score on total_amount\namounts = [r[\"total_amount\"] for r in rows]\nn = len(amounts)\nmean = sum(amounts) / n\nvariance = sum((a - mean) ** 2 for a in amounts) / (n - 1) if n > 1 else 0\nstdev = variance ** 0.5\n\noutput = []\nfor r in rows:\n    z = (r[\"total_amount\"] - mean) / stdev if stdev else 0\n    r[\"z_score\"] = round(z, 2)\n    r[\"is_anomaly\"] = abs(z) > 2\n    output.append({\"json\": r})\n\nreturn output"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -112
+      ],
+      "id": "9ff18ad5-0f28-46a7-99f2-b96fca74c881",
+      "name": "Code in Python"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "25153af4-6115-46ac-b7d6-450ea422851d",
+              "name": "order_date",
+              "value": "={{ $now.minus({ days: Number($json.id) % 30 }).toISODate() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -336,
+        -112
+      ],
+      "id": "ecb24bb6-bf77-4f33-addf-8bc9d8a3ba21",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "carts",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1.1,
+      "position": [
+        -768,
+        -112
+      ],
+      "id": "704aaf2f-ffb7-4f9e-8cf3-27444948527e",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "products",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1.1,
+      "position": [
+        -544,
+        -112
+      ],
+      "id": "774c80df-74a4-4dd1-afdc-9b38cfa9aca6",
+      "name": "Split Out1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "1f3b3ba3-6288-4092-8ff5-65ce7a4ee931",
+              "leftValue": "={{ $json.is_anomaly }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        64,
+        -112
+      ],
+      "id": "f620a0b9-753d-49bc-89fd-16188ea3662e",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        176,
+        -352
+      ],
+      "id": "f7bea1d7-0a62-4217-9cb0-9f276e95d2b3",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3-flash-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a sales analyst. Below are unusual product sales found today.\nWrite a short report in simple English (max 5 lines): which products look unusual, why (very high or very low amount), and one suggested action.\n\nData:\n{{ JSON.stringify($json.data.slice(0, 10)) }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        432,
+        -352
+      ],
+      "id": "900ac96f-0785-4a2d-97e1-079ec67a5e57",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "chaitanya.challa35@gmail.com",
+        "subject": "Sales Anomaly Alert",
+        "message": "={{ $json.content.parts[0].text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        832,
+        -352
+      ],
+      "id": "12afff8e-0593-4908-82ec-f9d4a09ab6c1",
+      "name": "Send a message",
+      "webhookId": "ae24a327-5bf9-4bbc-95ac-f372cc51bbd9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "pnIk5KiQPIMufdWJ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "6h8j4UvtgWAqiMKZ",
+          "mode": "list",
+          "cachedResultName": "Data tables)",
+          "cachedResultUrl": "/projects/gI8HrHgeh9bFeDwN/datatables/6h8j4UvtgWAqiMKZ"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "is_anomaly": true,
+            "product_id": "={{ $json.product_id }}",
+            "product": "={{ $json.product }}",
+            "order_date": "={{ $json.order_date }}",
+            "price": "={{ $json.price }}",
+            "quantity": "={{ $json.quantity }}",
+            "total_amount": "={{ $json.total_amount }}",
+            "discounted_amount": "={{ $json.discounted_amount }}",
+            "z_score": "={{ $json.z_score }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "product_id",
+              "displayName": "product_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "product",
+              "displayName": "product",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "order_date",
+              "displayName": "order_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "price",
+              "displayName": "price",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "quantity",
+              "displayName": "quantity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "total_amount",
+              "displayName": "total_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "discounted_amount",
+              "displayName": "discounted_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "z_score",
+              "displayName": "z_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "is_anomaly",
+              "displayName": "is_anomaly",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        320,
+        -96
+      ],
+      "id": "96a07c1d-8f57-4b62-b5d1-e0a61980a2ae",
+      "name": "Insert row"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Code in Python",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Split Out1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in Python": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ed8aa2c2-0e52-497a-9571-0605bfae81af",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a28abbe212ed700ed644b3e38b825847f54bad0d42dcff2b78279811af751c74"
+  },
+  "nodeGroups": [],
+  "id": "Q2GfLz0cPe9ay75E",
+  "tags": []
+}
