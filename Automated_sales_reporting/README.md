@@ -59,6 +59,6 @@ Once imported, you will notice some nodes might have warning icons. You need to 
 3. Update the "Send To" email address in the Gmail node to your preferred recipient.
 4. Update the **Insert row (Data Table)** node to point to a Data Table inside your own n8n instance.
 
-## 💡 Usage
+##  Usage
 
 Once your credentials are set up, you can test the pipeline by clicking the **Test Workflow** or **Execute** button at the bottom of the n8n canvas. To run it continuously, toggle the workflow switch to **Active** in the top right corner.
