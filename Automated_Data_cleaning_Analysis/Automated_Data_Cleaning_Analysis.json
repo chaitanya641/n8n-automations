@@ -1,0 +1,340 @@
+{
+  "name": "Automated_Data_Cleaning_Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "DATA_CLEANING",
+        "formDescription": "Upload the file",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Upload Your File",
+              "fieldType": "file"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -928,
+        -512
+      ],
+      "id": "9e834349-2230-4848-ad7d-9baed7da93ae",
+      "name": "On form submission",
+      "webhookId": "5ecced52-1b37-467f-a44f-e6793b06bcd7"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "Upload_Your_File",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.2,
+      "position": [
+        -704,
+        -512
+      ],
+      "id": "5a5a1f03-a590-4ff9-a130-10cb7b28a390",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "b5eb2f21-7080-4840-b13c-3a7f66d61a1e",
+              "leftValue": "=   {{ $json }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        -512,
+        -512
+      ],
+      "id": "3912741d-8265-4131-9ecd-8f2baeba1016",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "sendTo": "chaitanya.challa35@gmail.com",
+        "subject": "Data Analysis Report",
+        "emailType": "text",
+        "message": "Your file is empty ,Try again !!",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -960,
+        -240
+      ],
+      "id": "8beca37d-74de-40e8-878c-7921457fe455",
+      "name": "Send a message",
+      "webhookId": "9e9d0892-0007-4672-9715-e9cfd53c9e9a",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "pnIk5KiQPIMufdWJ",
+          "name": "Gmail account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "language": "pythonNative",
+        "pythonCode": "# ---------- STEP 0: Read all rows from the previous node ----------\nrows = [item[\"json\"] for item in _items]\n\nNULL_WORDS = [\"\", \"na\", \"n/a\", \"null\", \"none\", \"nan\", \"-\"]\nlog = []\nrows_before = len(rows)\n\n\n# ---------- Helper functions ----------\ndef is_number(v):\n    \"\"\"True if the value can be converted to a number.\"\"\"\n    if v is None or isinstance(v, bool):\n        return False\n    try:\n        float(v)\n        return True\n    except (TypeError, ValueError):\n        return False\n\n\ndef tidy(x):\n    \"\"\"Show 25.0 as 25, and round decimals to 2 places.\"\"\"\n    x = float(x)\n    if x.is_integer():\n        return int(x)\n    return round(x, 2)\n\n\ndef percentile(sorted_vals, p):\n    \"\"\"Percentile (0 to 1) using linear interpolation.\"\"\"\n    k = (len(sorted_vals) - 1) * p\n    f = int(k)\n    c = min(f + 1, len(sorted_vals) - 1)\n    return sorted_vals[f] + (sorted_vals[c] - sorted_vals[f]) * (k - f)\n\n\n# ---------- STEP 1: Trim text and convert blanks to None ----------\nstep1 = []\nfor r in rows:\n    new_row = {}\n    for key, value in r.items():\n        clean_key = str(key).strip()\n        if isinstance(value, str):\n            value = value.strip()\n            if value.lower() in NULL_WORDS:\n                value = None\n        new_row[clean_key] = value\n    step1.append(new_row)\n\n\n# ---------- STEP 2: Remove duplicate rows ----------\nseen = set()\ndata = []\nfor r in step1:\n    signature = str(sorted(r.items(), key=lambda kv: kv[0]))\n    if signature not in seen:\n        seen.add(signature)\n        data.append(r)\n\nduplicates_removed = len(step1) - len(data)\nlog.append(\"Removed \" + str(duplicates_removed) + \" duplicate rows\")\n\n\n# ---------- STEP 3: Collect column names ----------\ncolumns = []\nfor r in data:\n    for key in r.keys():\n        if key not in columns:\n            columns.append(key)\n\ntotal_rows = len(data)\nprofile = {}\ndropped = []\nmissing_cells_total = 0\nfilled_cells_total = 0\n\n\n# ---------- STEP 4: Profile, fill, and drop each column ----------\nfor col in columns:\n    values = [r.get(col) for r in data if r.get(col) is not None]\n    missing_count = total_rows - len(values)\n    missing_pct = round(missing_count / total_rows * 100, 1) if total_rows > 0 else 0\n    missing_cells_total += missing_count\n\n    # Drop columns with more than 50% missing values\n    if missing_pct > 50:\n        dropped.append(col)\n        log.append('Dropped column \"' + col + '\" (' + str(missing_pct) + \"% missing)\")\n        continue\n\n    # ---- Numeric column ----\n    if len(values) > 0 and all(is_number(v) for v in values):\n        nums = sorted([float(v) for v in values])\n        n = len(nums)\n        mean = sum(nums) / n\n        if n > 1:\n            variance = sum((x - mean) ** 2 for x in nums) / (n - 1)\n        else:\n            variance = 0\n        std = variance ** 0.5\n        median = percentile(nums, 0.5)\n        q1 = percentile(nums, 0.25)\n        q3 = percentile(nums, 0.75)\n        iqr = q3 - q1\n        low_limit = q1 - 1.5 * iqr\n        high_limit = q3 + 1.5 * iqr\n        outliers = len([x for x in nums if x < low_limit or x > high_limit])\n\n        profile[col] = {\n            \"type\": \"numeric\",\n            \"count\": n,\n            \"missing_pct\": missing_pct,\n            \"mean\": tidy(mean),\n            \"median\": tidy(median),\n            \"std\": tidy(std),\n            \"min\": tidy(nums[0]),\n            \"q1\": tidy(q1),\n            \"q3\": tidy(q3),\n            \"max\": tidy(nums[-1]),\n            \"outliers\": outliers,\n        }\n\n        # Fill missing values with the median, and convert text to numbers\n        for r in data:\n            if r.get(col) is None:\n                r[col] = tidy(median)\n            else:\n                r[col] = tidy(r[col])\n\n        if missing_count > 0:\n            filled_cells_total += missing_count\n            log.append('Filled \"' + col + '\" with median ' + str(tidy(median))\n                       + \" (\" + str(missing_pct) + \"% missing)\")\n\n    # ---- Categorical (text) column ----\n    else:\n        counts = {}\n        for v in values:\n            key = str(v)\n            counts[key] = counts.get(key, 0) + 1\n        ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)\n\n        profile[col] = {\n            \"type\": \"categorical\",\n            \"count\": len(values),\n            \"missing_pct\": missing_pct,\n            \"unique\": len(ranked),\n            \"top5\": [{\"value\": k, \"count\": c} for k, c in ranked[:5]],\n        }\n\n        # Fill missing values with the most common value (mode)\n        if missing_count > 0 and len(ranked) > 0:\n            mode_value = ranked[0][0]\n            for r in data:\n                if r.get(col) is None:\n                    r[col] = mode_value\n            filled_cells_total += missing_count\n            log.append('Filled \"' + col + '\" with mode \"' + mode_value\n                       + '\" (' + str(missing_pct) + \"% missing)\")\n\n\n# ---------- STEP 5: Remove dropped columns from the data ----------\nfor r in data:\n    for col in dropped:\n        if col in r:\n            del r[col]\n\n\n# ---------- STEP 6: Data quality score ----------\ntotal_cells = rows_before * len(columns) if len(columns) > 0 else 0\nmissing_pct_overall = round(missing_cells_total / total_cells * 100, 1) if total_cells > 0 else 0\nduplicate_pct = round(duplicates_removed / rows_before * 100, 1) if rows_before > 0 else 0\nquality_score = round(max(0, 100 - missing_pct_overall - duplicate_pct - len(dropped) * 5), 1)\n\n\n# ---------- STEP 7: Return one summary item ----------\nreturn [{\n    \"json\": {\n        \"rows_before\": rows_before,\n        \"rows_after\": len(data),\n        \"columns_after\": len(columns) - len(dropped),\n        \"duplicates_removed\": duplicates_removed,\n        \"cells_filled\": filled_cells_total,\n        \"columns_dropped\": dropped,\n        \"quality_score\": quality_score,\n        \"cleaning_log\": log,\n        \"profile\": profile,\n        \"cleaned\": data\n    }\n}]"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -528
+      ],
+      "id": "340f03d8-d3fd-4859-80f9-2b84ffc9aaf6",
+      "name": "Code in Python"
+    },
+    {
+      "parameters": {
+        "language": "pythonNative",
+        "pythonCode": "# ---------- STEP 0: Read the output of the cleaning node ----------\nsrc = _items[0][\"json\"]\ntry:\n    src = src.to_py()      # converts n8n data to normal Python data\nexcept Exception:\n    pass\n\ncleaned = src.get(\"cleaned\", [])\nprofile = src.get(\"profile\", {})\nn_rows = len(cleaned)\n\nif n_rows == 0:\n    return [{\"json\": {\"error\": \"No cleaned data received from previous node\"}}]\n\n\n# ---------- Helper functions ----------\ndef tidy(x):\n    x = float(x)\n    if x.is_integer():\n        return int(x)\n    return round(x, 2)\n\n\ndef mean_of(v):\n    return sum(v) / len(v)\n\n\ndef std_of(v):\n    if len(v) < 2:\n        return 0.0\n    m = mean_of(v)\n    return (sum((x - m) ** 2 for x in v) / (len(v) - 1)) ** 0.5\n\n\ndef skewness(v):\n    n = len(v)\n    m = mean_of(v)\n    s = (sum((x - m) ** 2 for x in v) / n) ** 0.5\n    if s == 0:\n        return 0.0\n    return (sum((x - m) ** 3 for x in v) / n) / (s ** 3)\n\n\ndef kurtosis(v):\n    \"\"\"Excess kurtosis (0 means normal-like tails).\"\"\"\n    n = len(v)\n    m = mean_of(v)\n    s = (sum((x - m) ** 2 for x in v) / n) ** 0.5\n    if s == 0:\n        return 0.0\n    return (sum((x - m) ** 4 for x in v) / n) / (s ** 4) - 3\n\n\ndef pearson(a, b):\n    ma = mean_of(a)\n    mb = mean_of(b)\n    num = sum((x - ma) * (y - mb) for x, y in zip(a, b))\n    da = sum((x - ma) ** 2 for x in a) ** 0.5\n    db = sum((y - mb) ** 2 for y in b) ** 0.5\n    if da == 0 or db == 0:\n        return 0.0\n    return num / (da * db)\n\n\n# ---------- STEP 1: Separate numeric, categorical and ID columns ----------\nnumeric_cols = []\ncategorical_cols = []\nid_cols = []\ncol_values = {}\n\nfor col, p in profile.items():\n    if p.get(\"type\") == \"numeric\":\n        vals = [float(r[col]) for r in cleaned]\n        name = col.lower().replace(\"_\", \" \").replace(\"-\", \" \")\n        looks_like_id = (\"id\" in name.split() or name.endswith(\"id\")) and len(set(vals)) == len(vals)\n        if looks_like_id:\n            id_cols.append(col)\n        else:\n            numeric_cols.append(col)\n            col_values[col] = vals\n    else:\n        categorical_cols.append(col)\n\nfindings = []\n\n\n# ---------- STEP 2: Numeric analysis (shape, spread, outliers) ----------\nnumeric_analysis = {}\n\nfor col in numeric_cols:\n    vals = col_values[col]\n    m = mean_of(vals)\n    sd = std_of(vals)\n    sk = skewness(vals)\n    ku = kurtosis(vals)\n    cv = (sd / abs(m) * 100) if m != 0 else 0\n\n    if abs(sk) < 0.5:\n        shape = \"roughly symmetric\"\n    elif abs(sk) < 1:\n        shape = \"moderately \" + (\"right\" if sk > 0 else \"left\") + \"-skewed\"\n    else:\n        shape = \"highly \" + (\"right\" if sk > 0 else \"left\") + \"-skewed\"\n\n    q1 = profile[col][\"q1\"]\n    q3 = profile[col][\"q3\"]\n    iqr = q3 - q1\n    low_limit = q1 - 1.5 * iqr\n    high_limit = q3 + 1.5 * iqr\n    outlier_vals = sorted([x for x in vals if x < low_limit or x > high_limit])\n\n    numeric_analysis[col] = {\n        \"mean\": tidy(m),\n        \"median\": profile[col][\"median\"],\n        \"std\": tidy(sd),\n        \"min\": profile[col][\"min\"],\n        \"max\": profile[col][\"max\"],\n        \"range\": tidy(max(vals) - min(vals)),\n        \"skewness\": round(sk, 2),\n        \"kurtosis\": round(ku, 2),\n        \"shape\": shape,\n        \"coefficient_of_variation_pct\": round(cv, 1),\n        \"outlier_count\": len(outlier_vals),\n        \"outlier_examples\": [tidy(x) for x in outlier_vals[:5]],\n        \"outlier_limits\": [tidy(low_limit), tidy(high_limit)],\n    }\n\n    if abs(sk) >= 1:\n        findings.append('\"' + col + '\" is ' + shape + \" (skewness \" + str(round(sk, 2)) + \")\")\n    if cv > 50:\n        findings.append('\"' + col + '\" varies a lot (coefficient of variation ' + str(round(cv, 1)) + \"%)\")\n    if len(outlier_vals) > 0:\n        findings.append('\"' + col + '\" has ' + str(len(outlier_vals)) + \" outlier(s), e.g. \"\n                        + \", \".join(str(tidy(x)) for x in outlier_vals[:3]))\n\n\n# ---------- STEP 3: Correlation matrix (up to 12 numeric columns) ----------\ncorr_cols = numeric_cols[:12]\ncorrelation_matrix = {}\npairs = []\n\nfor a in corr_cols:\n    correlation_matrix[a] = {}\n    for b in corr_cols:\n        if a == b:\n            correlation_matrix[a][b] = 1.0\n        else:\n            correlation_matrix[a][b] = round(pearson(col_values[a], col_values[b]), 2)\n\nfor i in range(len(corr_cols)):\n    for j in range(i + 1, len(corr_cols)):\n        a = corr_cols[i]\n        b = corr_cols[j]\n        r = correlation_matrix[a][b]\n        if abs(r) >= 0.5:\n            strength = \"strong\" if abs(r) >= 0.7 else \"moderate\"\n            direction = \"positive\" if r > 0 else \"negative\"\n            pairs.append({\"column_1\": a, \"column_2\": b, \"r\": r,\n                          \"description\": strength + \" \" + direction})\n\npairs.sort(key=lambda p: abs(p[\"r\"]), reverse=True)\nnotable_correlations = pairs[:10]\n\nfor p in notable_correlations[:3]:\n    findings.append(p[\"description\"].capitalize() + ' correlation between \"' + p[\"column_1\"]\n                    + '\" and \"' + p[\"column_2\"] + '\" (r = ' + str(p[\"r\"]) + \")\")\n\n\n# ---------- STEP 4: Categorical analysis ----------\ncategorical_analysis = {}\n\nfor col in categorical_cols:\n    counts = {}\n    for r in cleaned:\n        key = str(r[col])\n        counts[key] = counts.get(key, 0) + 1\n    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)\n\n    top3 = []\n    for value, count in ranked[:3]:\n        top3.append({\"value\": value, \"count\": count, \"percent\": round(count / n_rows * 100, 1)})\n\n    note = \"\"\n    if ranked[0][1] / n_rows > 0.7:\n        note = \"dominated by one value\"\n        findings.append('\"' + col + '\" is dominated by \"' + ranked[0][0] + '\" ('\n                        + str(round(ranked[0][1] / n_rows * 100, 1)) + \"% of rows)\")\n    elif len(ranked) > n_rows * 0.5:\n        note = \"very many unique values, may be an identifier or free text\"\n\n    categorical_analysis[col] = {\"unique\": len(ranked), \"top3\": top3, \"note\": note}\n\n\n# ---------- STEP 5: Group comparison (average of numbers per category) ----------\ngroup_summary = {}\ngroup_cats = [c for c in categorical_cols if categorical_analysis[c][\"unique\"] <= 10][:3]\ngroup_nums = numeric_cols[:3]\ngroup_findings = 0\n\nfor cat in group_cats:\n    group_summary[cat] = {}\n    for num in group_nums:\n        buckets = {}\n        for r in cleaned:\n            buckets.setdefault(str(r[cat]), []).append(float(r[num]))\n        averages = {g: tidy(mean_of(v)) for g, v in buckets.items()}\n        group_summary[cat][num] = averages\n\n        if len(averages) >= 2 and group_findings < 5:\n            best = max(averages, key=lambda g: averages[g])\n            worst = min(averages, key=lambda g: averages[g])\n            findings.append('Average \"' + num + '\" by \"' + cat + '\": highest in \"' + best + '\" ('\n                            + str(averages[best]) + \"), lowest in \\\"\" + worst + '\" (' + str(averages[worst]) + \")\")\n            group_findings += 1\n\n\n# ---------- STEP 6: Data quality finding ----------\nfindings.insert(0, \"Data quality score is \" + str(src.get(\"quality_score\")) + \"/100; \"\n                + str(src.get(\"duplicates_removed\")) + \" duplicate rows removed and \"\n                + str(src.get(\"cells_filled\")) + \" missing cells filled\")\n\n\n# ---------- STEP 7: Return everything ----------\nreturn [{\n    \"json\": {\n        \"overview\": {\n            \"rows_before\": src.get(\"rows_before\"),\n            \"rows_after\": src.get(\"rows_after\"),\n            \"columns_after\": src.get(\"columns_after\"),\n            \"numeric_columns\": len(numeric_cols),\n            \"categorical_columns\": len(categorical_cols),\n            \"duplicates_removed\": src.get(\"duplicates_removed\"),\n            \"cells_filled\": src.get(\"cells_filled\"),\n            \"columns_dropped\": src.get(\"columns_dropped\"),\n            \"quality_score\": src.get(\"quality_score\"),\n        },\n        \"key_findings\": findings,\n        \"numeric_analysis\": numeric_analysis,\n        \"correlation_matrix\": correlation_matrix,\n        \"notable_correlations\": notable_correlations,\n        \"categorical_analysis\": categorical_analysis,\n        \"group_summary\": group_summary,\n        \"skipped_id_columns\": id_cols,\n        \"cleaning_log\": src.get(\"cleaning_log\"),\n        \"cleaned\": cleaned,\n    }\n}]"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -320
+      ],
+      "id": "c86bbd16-eabb-4fe6-9226-0bf316dec67a",
+      "name": "Code in Python1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Here is the analysis summary of a dataset (JSON):\n\n{{ JSON.stringify({\n  overview: $json.overview,\n  key_findings: $json.key_findings,\n  numeric_analysis: $json.numeric_analysis,\n  notable_correlations: $json.notable_correlations,\n  categorical_analysis: $json.categorical_analysis,\n  group_summary: $json.group_summary,\n  cleaning_log: $json.cleaning_log\n}) }}\n\nWrite the report now.",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -768,
+        -80
+      ],
+      "id": "bee33b41-d08b-4cee-9b7b-c1bb43e082e8",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        -768,
+        112
+      ],
+      "id": "9f33cd40-a634-4cf3-b30c-391f552baf0e",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "html": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>Data Analysis Report</title>\n<style>\n  * { box-sizing: border-box; }\n  body {\n    margin: 0;\n    padding: 0;\n    background: #eef2f7;\n    font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n    color: #1f2937;\n    line-height: 1.65;\n    font-size: 14px;\n  }\n  .wrapper { max-width: 880px; margin: 0 auto; padding: 24px 16px 40px 16px; }\n\n  /* ---------- Header ---------- */\n  .header {\n    background: linear-gradient(135deg, #0f2a47 0%, #1f4e79 55%, #2e75b6 100%);\n    color: #ffffff;\n    padding: 34px 36px;\n    border-radius: 12px 12px 0 0;\n  }\n  .header .tag { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.8; }\n  .header h1 { margin: 6px 0 4px 0; font-size: 30px; font-weight: 700; letter-spacing: 0.3px; }\n  .header .sub { font-size: 13px; opacity: 0.85; }\n\n  .metabar {\n    background: #ffffff;\n    border-bottom: 1px solid #e3e8ef;\n    padding: 12px 36px;\n    font-size: 12px;\n    color: #6b7280;\n  }\n  .metabar b { color: #1f2937; }\n\n  /* ---------- Body ---------- */\n  .content { background: #ffffff; padding: 28px 36px 36px 36px; border-radius: 0 0 12px 12px; box-shadow: 0 4px 18px rgba(15, 42, 71, 0.08); }\n\n  .section-title {\n    font-size: 17px;\n    font-weight: 700;\n    color: #0f2a47;\n    margin: 34px 0 14px 0;\n    padding-left: 12px;\n    border-left: 5px solid #2e75b6;\n  }\n  .section-title:first-child { margin-top: 0; }\n\n  /* ---------- KPI cards ---------- */\n  table.kpi { width: 100%; border-collapse: separate; border-spacing: 8px 0; margin-left: -8px; margin-right: -8px; }\n  table.kpi td {\n    width: 20%;\n    background: #f4f8fc;\n    border: 1px solid #dbe6f1;\n    border-top: 4px solid #2e75b6;\n    border-radius: 8px;\n    text-align: center;\n    padding: 16px 6px;\n  }\n  table.kpi .num { display: block; font-size: 26px; font-weight: 700; color: #0f2a47; }\n  table.kpi .lbl { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #6b7280; margin-top: 2px; }\n\n  .score-box { margin-top: 18px; padding: 16px 20px; border-radius: 8px; background: #f9fafb; border: 1px solid #e5e7eb; }\n  .score-pill {\n    display: inline-block;\n    color: #ffffff;\n    font-weight: 700;\n    font-size: 13px;\n    padding: 5px 14px;\n    border-radius: 20px;\n    margin-right: 10px;\n  }\n\n  /* ---------- AI insights ---------- */\n  .insights {\n    background: #fbfcfe;\n    border: 1px solid #e3e8ef;\n    border-radius: 8px;\n    padding: 6px 24px 14px 24px;\n  }\n  .insights h1, .insights h2 { font-size: 16px; color: #1f4e79; margin: 22px 0 8px 0; padding-bottom: 5px; border-bottom: 1px solid #dbe6f1; }\n  .insights h3 { font-size: 14px; color: #2e75b6; margin: 16px 0 6px 0; }\n  .insights p { margin: 8px 0; }\n  .insights ul, .insights ol { margin: 8px 0 8px 20px; padding: 0; }\n  .insights li { margin-bottom: 5px; }\n  .insights hr { border: none; border-top: 1px solid #e3e8ef; margin: 18px 0; }\n  .insights strong { color: #0f2a47; }\n\n  /* ---------- Tables ---------- */\n  .table-wrap { overflow-x: auto; }\n  table.data { width: 100%; border-collapse: collapse; font-size: 13px; }\n  table.data th {\n    background: #1f4e79;\n    color: #ffffff;\n    text-align: center;\n    padding: 10px 8px;\n    font-weight: 600;\n    font-size: 12px;\n    letter-spacing: 0.4px;\n  }\n  table.data th:first-child { text-align: left; border-radius: 6px 0 0 0; }\n  table.data th:last-child { border-radius: 0 6px 0 0; }\n  table.data td { padding: 9px 8px; border-bottom: 1px solid #e8edf3; text-align: center; }\n  table.data td:first-child { text-align: left; font-weight: 600; color: #0f2a47; }\n  table.data tr:nth-child(even) td { background: #f7fafd; }\n\n  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }\n  .badge.ok { background: #e3f6ec; color: #1b8a5a; }\n  .badge.warn { background: #fdeaea; color: #c0392b; }\n  .badge.info { background: #e6f0fa; color: #1f4e79; }\n  .badge.pos { background: #e3f6ec; color: #1b8a5a; }\n  .badge.neg { background: #fdeaea; color: #c0392b; }\n\n  /* ---------- Lists ---------- */\n  ul.findings, ul.log { list-style: none; margin: 0; padding: 0; }\n  ul.findings li {\n    background: #f4f8fc;\n    border-left: 4px solid #2e75b6;\n    border-radius: 4px;\n    padding: 10px 14px;\n    margin-bottom: 8px;\n  }\n  ul.log li {\n    padding: 8px 4px 8px 26px;\n    border-bottom: 1px dashed #dde3ea;\n    position: relative;\n    font-size: 13px;\n    color: #374151;\n  }\n  ul.log li:before { content: \"\\2713\"; position: absolute; left: 4px; color: #1b8a5a; font-weight: 700; }\n\n  .footer { text-align: center; font-size: 12px; color: #8a94a3; margin-top: 26px; }\n  .footer b { color: #1f4e79; }\n\n  @media print {\n    body { background: #ffffff; }\n    .content { box-shadow: none; }\n    .section-title { page-break-after: avoid; }\n    table.data tr { page-break-inside: avoid; }\n  }\n</style>\n</head>\n<body>\n<div class=\"wrapper\">\n\n  <!-- HEADER -->\n  <div class=\"header\">\n    <div class=\"tag\">AutoInsight &bull; Automated Data Report</div>\n    <h1>Data Analysis Report</h1>\n    <div class=\"sub\">Cleaning summary, statistical profile and AI-generated insights</div>\n  </div>\n\n  <div class=\"metabar\">\n    <b>Generated:</b> {{ $now.format('dd LLL yyyy, hh:mm a') }}\n    &nbsp;&nbsp;|&nbsp;&nbsp;\n    <b>Rows processed:</b> {{ $('Code in Python1').first().json.overview.rows_before }} &rarr; {{ $('Code in Python1').first().json.overview.rows_after }}\n    &nbsp;&nbsp;|&nbsp;&nbsp;\n    <b>Numeric columns:</b> {{ $('Code in Python1').first().json.overview.numeric_columns }}\n    &nbsp;&nbsp;|&nbsp;&nbsp;\n    <b>Categorical columns:</b> {{ $('Code in Python1').first().json.overview.categorical_columns }}\n  </div>\n\n  <div class=\"content\">\n\n    <!-- OVERVIEW -->\n    <div class=\"section-title\">Dataset Overview</div>\n\n    <table class=\"kpi\">\n      <tr>\n        <td><span class=\"num\">{{ $('Code in Python1').first().json.overview.rows_after }}</span><span class=\"lbl\">Clean Rows</span></td>\n        <td><span class=\"num\">{{ $('Code in Python1').first().json.overview.columns_after }}</span><span class=\"lbl\">Columns</span></td>\n        <td><span class=\"num\">{{ $('Code in Python1').first().json.overview.duplicates_removed }}</span><span class=\"lbl\">Duplicates Removed</span></td>\n        <td><span class=\"num\">{{ $('Code in Python1').first().json.overview.cells_filled }}</span><span class=\"lbl\">Cells Filled</span></td>\n        <td><span class=\"num\">{{ $('Code in Python1').first().json.overview.quality_score }}</span><span class=\"lbl\">Quality Score</span></td>\n      </tr>\n    </table>\n\n    <div class=\"score-box\">\n      <span class=\"score-pill\" style=\"background: {{ $('Code in Python1').first().json.overview.quality_score >= 90 ? '#1b8a5a' : ($('Code in Python1').first().json.overview.quality_score >= 75 ? '#d98b0b' : '#c0392b') }};\">\n        {{ $('Code in Python1').first().json.overview.quality_score >= 90 ? 'EXCELLENT' : ($('Code in Python1').first().json.overview.quality_score >= 75 ? 'GOOD' : 'NEEDS ATTENTION') }}\n      </span>\n      Data quality score is <b>{{ $('Code in Python1').first().json.overview.quality_score }} / 100</b>, based on missing values, duplicates and dropped columns.\n    </div>\n\n    <!-- AI INSIGHTS -->\n    <div class=\"section-title\">AI-Generated Insights</div>\n    <div class=\"insights\">\n      {{ $json.data }}\n    </div>\n\n    <!-- KEY FINDINGS -->\n    <div class=\"section-title\">Key Statistical Findings</div>\n    <ul class=\"findings\">\n      {{ $('Code in Python1').first().json.key_findings.map(function(f){ return '<li>' + f + '</li>'; }).join('') }}\n    </ul>\n\n    <!-- NUMERIC STATS -->\n    <div class=\"section-title\">Numeric Column Statistics</div>\n    <div class=\"table-wrap\">\n      <table class=\"data\">\n        <tr>\n          <th>Column</th><th>Mean</th><th>Median</th><th>Std Dev</th><th>Min</th><th>Max</th><th>Distribution</th><th>Outliers</th>\n        </tr>\n        {{ Object.entries($('Code in Python1').first().json.numeric_analysis).map(function(e){ return '<tr><td>' + e[0] + '</td><td>' + e[1].mean + '</td><td>' + e[1].median + '</td><td>' + e[1].std + '</td><td>' + e[1].min + '</td><td>' + e[1].max + '</td><td><span class=\"badge info\">' + e[1].shape + '</span></td><td>' + (e[1].outlier_count > 0 ? '<span class=\"badge warn\">' + e[1].outlier_count + '</span>' : '<span class=\"badge ok\">0</span>') + '</td></tr>'; }).join('') }}\n      </table>\n    </div>\n\n    <!-- CORRELATIONS -->\n    <div class=\"section-title\">Notable Correlations</div>\n    <div class=\"table-wrap\">\n      <table class=\"data\">\n        <tr><th>Column 1</th><th>Column 2</th><th>Correlation (r)</th><th>Strength</th></tr>\n        {{ $('Code in Python1').first().json.notable_correlations.length > 0 ? $('Code in Python1').first().json.notable_correlations.map(function(p){ return '<tr><td>' + p.column_1 + '</td><td>' + p.column_2 + '</td><td>' + p.r + '</td><td><span class=\"badge ' + (p.r > 0 ? 'pos' : 'neg') + '\">' + p.description + '</span></td></tr>'; }).join('') : '<tr><td colspan=\"4\">No strong correlations were found between numeric columns.</td></tr>' }}\n      </table>\n    </div>\n\n    <!-- CATEGORICAL -->\n    <div class=\"section-title\">Categorical Column Overview</div>\n    <div class=\"table-wrap\">\n      <table class=\"data\">\n        <tr><th>Column</th><th>Unique Values</th><th>Most Common Value</th><th>Note</th></tr>\n        {{ Object.entries($('Code in Python1').first().json.categorical_analysis).map(function(e){ return '<tr><td>' + e[0] + '</td><td>' + e[1].unique + '</td><td>' + e[1].top3[0].value + ' (' + e[1].top3[0].percent + '%)</td><td>' + (e[1].note ? '<span class=\"badge warn\">' + e[1].note + '</span>' : '<span class=\"badge ok\">OK</span>') + '</td></tr>'; }).join('') }}\n      </table>\n    </div>\n\n    <!-- CLEANING LOG -->\n    <div class=\"section-title\">Data Cleaning Log</div>\n    <ul class=\"log\">\n      {{ $('Code in Python1').first().json.cleaning_log.map(function(l){ return '<li>' + l + '</li>'; }).join('') }}\n    </ul>\n\n  </div>\n\n  <div class=\"footer\">\n    Generated automatically by the <b>AutoInsight</b> n8n workflow &bull; Statistics computed with Python &bull; Insights written by AI\n  </div>\n\n</div>\n</body>\n</html>"
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        -176,
+        -80
+      ],
+      "id": "df0ae4ab-0c88-4da6-80cc-a5606513720e",
+      "name": "HTML"
+    },
+    {
+      "parameters": {
+        "jsCode": "const md = $input.first().json.text || '';\n\nlet h = md\n  .replace(/^### (.*)$/gm, '<h3>$1</h3>')\n  .replace(/^## (.*)$/gm, '<h2>$1</h2>')\n  .replace(/^# (.*)$/gm, '<h1>$1</h1>')\n  .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')\n  .replace(/`([^`]+)`/g, '<code>$1</code>')\n  .replace(/^---$/gm, '<hr>')\n  .replace(/^\\s*[\\*\\-] (.*)$/gm, '<li>$1</li>')\n  .replace(/^\\s*\\d+\\. (.*)$/gm, '<li>$1</li>')\n  .replace(/(<li>.*<\\/li>\\n?)+/g, function (m) { return '<ul>' + m + '</ul>'; });\n\nh = h.split('\\n').map(function (line) {\n  const t = line.trim();\n  return t && !t.startsWith('<') ? '<p>' + t + '</p>' : line;\n}).join('\\n');\n\nreturn [{ json: { data: h } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        -80
+      ],
+      "id": "6b4fbef6-bfe6-499e-ae78-27356f80450c",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "sendTo": "chaitanya.challa35@gmail.com",
+        "subject": "Data Analysis Report",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        48,
+        -80
+      ],
+      "id": "86ae2442-57a3-4c02-8565-00f34aeca1f1",
+      "name": "Send a message1",
+      "webhookId": "926aceca-5e2f-4279-b389-1d2d7842d56d",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "pnIk5KiQPIMufdWJ",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code in Python",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in Python": {
+      "main": [
+        [
+          {
+            "node": "Code in Python1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in Python1": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "811525b7-f214-47c0-afb7-12c1e7f2f44e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a28abbe212ed700ed644b3e38b825847f54bad0d42dcff2b78279811af751c74"
+  },
+  "nodeGroups": [],
+  "id": "f7WC24s7vRgXxYLB",
+  "tags": []
+}
