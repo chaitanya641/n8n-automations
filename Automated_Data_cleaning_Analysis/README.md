@@ -164,11 +164,5 @@ AutoInsight/
 
 **Challa Chaitanya**
 B.Tech CSE (Data Science)
+- Email:chaitanya.challa35@gmail.com
 
-- GitHub: [your-username](https://github.com/your-username)
-- LinkedIn: [your-profile](https://www.linkedin.com/in/your-profile)
-- Email: your-email@example.com
-
-## License
-
-This project is released under the MIT License.
